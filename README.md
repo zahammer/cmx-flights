@@ -3,7 +3,7 @@
 SAT4520/5520 Course Project
 
 **Live site:** (fill in after deployment)
-**Team members:** (fill in)
+**Team members:** Zach Hammer
 
 ---
 
