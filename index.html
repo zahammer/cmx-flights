@@ -412,12 +412,12 @@
 
 <!-- ── API KEY BANNER ── -->
 <div id="api-banner" style="background:#1a1200;border-bottom:1px solid #7a5018;padding:12px 32px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
-  <span style="color:#f0a030;font-size:13px;">⚠ Enter your RapidAPI key to load live flight data:</span>
-  <input type="text" id="api-key-input" placeholder="Paste your RapidAPI key here"
+  <span style="color:#f0a030;font-size:13px;">⚠ Enter your FlightAware AeroAPI key to load live flight data:</span>
+  <input type="text" id="api-key-input" placeholder="Paste your AeroAPI key here"
     style="background:#0a0c0f;border:1px solid #7a5018;color:#cdd5e0;padding:6px 12px;border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:12px;width:320px;" />
   <button class="btn-amber" onclick="saveApiKey()">Save Key</button>
-  <a href="https://rapidapi.com/aedbx/api/aerodatabox" target="_blank"
-     style="font-size:11px;color:#f0a030;opacity:0.7;">Get free key at RapidAPI → search "AeroDataBox" →</a>
+  <a href="https://flightaware.com/aeroapi/portal" target="_blank"
+     style="font-size:11px;color:#f0a030;opacity:0.7;">Get free key at flightaware.com/aeroapi/portal →</a>
 </div>
 
 <!-- ── MAIN ── -->
@@ -534,7 +534,7 @@
 // ═══════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════
-let API_KEY = localStorage.getItem('aerodatabox_key') || '';
+let API_KEY = localStorage.getItem('flightaware_key') || '';
 let selectedDate = todayStr();
 let aiPredictions = {};
 
@@ -563,9 +563,9 @@ document.addEventListener('DOMContentLoaded', () => {
 // ═══════════════════════════════════════════════
 function saveApiKey() {
   const val = document.getElementById('api-key-input').value.trim();
-  if (!val) { alert('Please enter your RapidAPI key.'); return; }
+  if (!val) { alert('Please enter your AeroAPI key.'); return; }
   API_KEY = val;
-  localStorage.setItem('aerodatabox_key', val);
+  localStorage.setItem('flightaware_key', val);
   hideBanner();
   fetchFlights();
 }
@@ -603,31 +603,34 @@ function updateDateLabel() {
 }
 
 // ═══════════════════════════════════════════════
-//  FLIGHTS — AeroDataBox via RapidAPI (free tier)
+//  FLIGHTS — FlightAware AeroAPI (free for personal/academic use)
+//  Docs: https://flightaware.com/aeroapi/portal/documentation
 // ═══════════════════════════════════════════════
 async function fetchFlights() {
   setFlightLoading();
-  // AeroDataBox needs a time window: midnight to midnight local
-  const from = selectedDate + 'T00:00';
-  const to   = selectedDate + 'T23:59';
-  const base = `https://aerodatabox.p.rapidapi.com/flights/airports/icao/KCMX/${from}/${to}`;
-  const headers = {
-    'X-RapidAPI-Key':  API_KEY,
-    'X-RapidAPI-Host': 'aerodatabox.p.rapidapi.com'
-  };
+
+  // AeroAPI uses KCMX (ICAO). Date filter: start/end in ISO 8601
+  const start = selectedDate + 'T00:00:00Z';
+  const end   = selectedDate + 'T23:59:59Z';
+  const base  = 'https://aeroapi.flightaware.com/aeroapi';
+  const headers = { 'x-apikey': API_KEY };
 
   try {
     const [arrRes, depRes] = await Promise.all([
-      fetch(base + '?direction=Arrival&withLeg=true&withCancelled=true&withCodeshared=true', { headers }),
-      fetch(base + '?direction=Departure&withLeg=true&withCancelled=true&withCodeshared=true', { headers })
+      fetch(`${base}/airports/KCMX/flights/arrivals?start=${start}&end=${end}&max_pages=1`, { headers }),
+      fetch(`${base}/airports/KCMX/flights/departures?start=${start}&end=${end}&max_pages=1`, { headers })
     ]);
 
     if (arrRes.status === 401 || depRes.status === 401) {
-      showFlightError('Invalid API key — check your RapidAPI key and try again.');
+      showFlightError('Invalid API key — check your AeroAPI key and try again.');
+      return;
+    }
+    if (arrRes.status === 403) {
+      showFlightError('API key does not have permission — make sure you activated a plan at flightaware.com/aeroapi/portal.');
       return;
     }
     if (arrRes.status === 429 || depRes.status === 429) {
-      showFlightError('Monthly request limit reached on free plan.');
+      showFlightError('Monthly request limit reached.');
       return;
     }
 
@@ -644,6 +647,13 @@ async function fetchFlights() {
   } catch (e) {
     showFlightError('Network error — ' + e.message);
   }
+}
+
+function showBannerNote(msg) {
+  const banner = document.getElementById('api-banner');
+  banner.style.cssText = 'display:flex;background:#0d1a0d;border-bottom:1px solid #2a5a2a;padding:12px 32px;gap:16px;align-items:center;flex-wrap:wrap;';
+  banner.innerHTML = `<span style="color:#3ecf82;font-size:13px;">${msg}</span>
+    <button class="btn-clear" onclick="this.parentElement.style.display='none'">Dismiss</button>`;
 }
 
 function refreshFlights() {
@@ -709,13 +719,14 @@ function renderArrivals(flights) {
     return;
   }
   document.getElementById('arrivals-body').innerHTML = flights.map(f => {
-    const num     = f.number || '—';
-    const airline = f.airline?.name || '—';
-    const origin  = f.departure?.airport?.name || '—';
-    const originC = f.departure?.airport?.iata || '';
-    const sched   = fmtTime(f.arrival?.scheduledTime?.local || f.arrival?.scheduledTime?.utc);
-    const actual  = fmtTime(f.arrival?.actualTime?.local   || f.arrival?.revisedTime?.local);
-    const status  = f.status || 'scheduled';
+    // FlightAware AeroAPI field names
+    const num     = f.ident || f.flight_number || '—';
+    const airline = f.operator || f.airline || '—';
+    const origin  = f.origin?.name || f.origin?.city || '—';
+    const originC = f.origin?.code_iata || f.origin?.code || '';
+    const sched   = fmtTime(f.scheduled_in || f.scheduled_on);
+    const actual  = fmtTime(f.actual_in    || f.estimated_in);
+    const status  = f.status || 'Scheduled';
     return `<tr>
       <td><div class="flight-num">${num}</div><div class="airline-name">${airline}</div></td>
       <td><div class="city-name">${origin}</div><div class="city-code">${originC}</div></td>
@@ -735,13 +746,13 @@ function renderDepartures(flights) {
     return;
   }
   document.getElementById('departures-body').innerHTML = flights.map(f => {
-    const num   = f.number || '—';
-    const airline = f.airline?.name || '—';
-    const dest  = f.arrival?.airport?.name || '—';
-    const destC = f.arrival?.airport?.iata || '';
-    const sched = fmtTime(f.departure?.scheduledTime?.local || f.departure?.scheduledTime?.utc);
-    const actual= fmtTime(f.departure?.actualTime?.local   || f.departure?.revisedTime?.local);
-    const status= f.status || 'scheduled';
+    const num     = f.ident || f.flight_number || '—';
+    const airline = f.operator || f.airline || '—';
+    const dest    = f.destination?.name || f.destination?.city || '—';
+    const destC   = f.destination?.code_iata || f.destination?.code || '';
+    const sched   = fmtTime(f.scheduled_out || f.scheduled_off);
+    const actual  = fmtTime(f.actual_out    || f.estimated_out);
+    const status  = f.status || 'Scheduled';
     return `<tr>
       <td><div class="flight-num">${num}</div><div class="airline-name">${airline}</div></td>
       <td><div class="city-name">${dest}</div><div class="city-code">${destC}</div></td>
