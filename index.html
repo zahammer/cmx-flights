@@ -603,22 +603,21 @@ function updateDateLabel() {
 }
 
 // ═══════════════════════════════════════════════
-//  FLIGHTS — FlightAware AeroAPI (free for personal/academic use)
-//  Docs: https://flightaware.com/aeroapi/portal/documentation
+//  FLIGHTS — FlightAware AeroAPI via CORS proxy
 // ═══════════════════════════════════════════════
 async function fetchFlights() {
   setFlightLoading();
 
-  // AeroAPI uses KCMX (ICAO). Date filter: start/end in ISO 8601
-  const start = selectedDate + 'T00:00:00Z';
-  const end   = selectedDate + 'T23:59:59Z';
-  const base  = 'https://aeroapi.flightaware.com/aeroapi';
+  const start  = selectedDate + 'T00:00:00Z';
+  const end    = selectedDate + 'T23:59:59Z';
+  const proxy  = 'https://corsproxy.io/?';
+  const base   = 'https://aeroapi.flightaware.com/aeroapi';
   const headers = { 'x-apikey': API_KEY };
 
   try {
     const [arrRes, depRes] = await Promise.all([
-      fetch(`${base}/airports/KCMX/flights/arrivals?start=${start}&end=${end}&max_pages=1`, { headers }),
-      fetch(`${base}/airports/KCMX/flights/departures?start=${start}&end=${end}&max_pages=1`, { headers })
+      fetch(proxy + encodeURIComponent(`${base}/airports/KCMX/flights/arrivals?start=${start}&end=${end}&max_pages=1`), { headers }),
+      fetch(proxy + encodeURIComponent(`${base}/airports/KCMX/flights/departures?start=${start}&end=${end}&max_pages=1`), { headers })
     ]);
 
     if (arrRes.status === 401 || depRes.status === 401) {
