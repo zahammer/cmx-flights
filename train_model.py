@@ -1,190 +1,192 @@
 """
-train_model.py
-==============
-Trains a cancellation and delay classifier using the merged dataset
-from collect_data.py. Saves the model as model.pkl for use in
-a Flask prediction server.
+train_model.py  —  CMX Delay Prediction: Model Training & Evaluation
+=====================================================================
+Trains two models to predict whether a CMX flight will be delayed >15 min:
+  - Baseline: Logistic Regression
+  - Improved: Random Forest
 
-Run:  python train_model.py
+Outputs:
+  - model.pkl          (saved model for serving predictions)
+  - results/report.txt (accuracy metrics for your project report)
+  - results/feature_importance.csv
+
+Run AFTER collect_data.py:
+    pip install scikit-learn pandas joblib matplotlib
+    python train_model.py
 """
 
-import joblib
+import os, joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.metrics import (classification_report, confusion_matrix,
+                             roc_auc_score, RocCurveDisplay)
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
-# ──────────────────────────────────────────────
-# FEATURES & TARGETS
-# ──────────────────────────────────────────────
+os.makedirs("results", exist_ok=True)
+
+# ─────────────────────────────────────────────────────────────
+# FEATURES used to predict delay
+# ─────────────────────────────────────────────────────────────
 FEATURES = [
     'wind_cmx',       # Max wind speed at CMX (mph)
-    'snow_cmx',       # Snowfall at CMX (inches)
-    'precip_cmx',     # Precipitation at CMX
+    'gusts_cmx',      # Max wind gusts at CMX (mph)
+    'snow_cmx',       # Total snowfall at CMX (inches)
+    'precip_cmx',     # Total precipitation at CMX
     'wind_ord',       # Max wind speed at ORD (mph)
-    'snow_ord',       # Snowfall at ORD (inches)
-    'precip_ord',     # Precipitation at ORD
-    'cmx_snow_flag',  # Binary: snow at CMX
-    'ord_snow_flag',  # Binary: snow at ORD
+    'gusts_ord',      # Max wind gusts at ORD (mph)
+    'snow_ord',       # Total snowfall at ORD (inches)
+    'precip_ord',     # Total precipitation at ORD
+    'snow_flag_cmx',  # Binary: snow at CMX
+    'snow_flag_ord',  # Binary: snow at ORD
+    'wind_flag_cmx',  # Binary: high wind at CMX
+    'wind_flag_ord',  # Binary: high wind at ORD
+    'storm_flag_cmx', # Binary: thunderstorm at CMX
+    'storm_flag_ord', # Binary: thunderstorm at ORD
     'month',          # Month (1–12)
-    'day_of_week',    # Day of week (0–6)
-    'is_weekend',     # Weekend flag
+    'day_of_week',    # Day of week (0=Mon … 6=Sun)
     'is_winter',      # Dec–Mar flag
 ]
+TARGET = 'delayed'
+
 
 def load_data():
-    df = pd.read_csv("data/flights_merged.csv")
-    df = df.dropna(subset=FEATURES + ['cancelled', 'delayed'])
-    print(f"✓ Loaded {len(df)} rows after dropping NaN rows")
+    path = "data/flights_merged.csv"
+    if not os.path.exists(path):
+        print("ERROR: data/flights_merged.csv not found.")
+        print("Run collect_data.py first.")
+        exit(1)
+
+    df = pd.read_csv(path)
+
+    # Drop rows missing key features or target
+    df = df.dropna(subset=[TARGET] + [f for f in FEATURES if f in df.columns])
+
+    # Fill any remaining NaN in features with 0
+    for col in FEATURES:
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = df[col].fillna(0)
+
+    print(f"Loaded {len(df)} rows")
+    print(f"Delay rate: {df[TARGET].mean():.1%}")
     return df
 
-def train_and_evaluate(df, target_col, target_name):
-    print(f"\n{'='*50}")
-    print(f"TARGET: {target_name}")
-    print(f"{'='*50}")
 
-    X = df[FEATURES].values
-    y = df[target_col].values
+def evaluate_model(name, model, X_train, X_test, y_train, y_test, report_lines):
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
 
-    print(f"Class distribution: {np.bincount(y)} ({y.mean():.1%} positive)")
+    auc   = roc_auc_score(y_test, y_prob)
+    cv    = cross_val_score(model, X_train, y_train, cv=StratifiedKFold(5), scoring='f1').mean()
+    report = classification_report(y_test, y_pred, target_names=['On Time', 'Delayed'])
+
+    lines = [
+        f"\n{'='*55}",
+        f"MODEL: {name}",
+        f"{'='*55}",
+        f"Cross-val F1 (train): {cv:.3f}",
+        f"ROC-AUC (test):       {auc:.3f}",
+        "",
+        "Classification Report (test set):",
+        report,
+    ]
+    for l in lines:
+        print(l)
+    report_lines.extend(lines)
+    return model, auc, y_prob
+
+
+if __name__ == "__main__":
+    print("CMX Delay Prediction — Model Training\n")
+
+    df = load_data()
+    X  = df[FEATURES].values
+    y  = df[TARGET].values
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
+    print(f"Train: {len(X_train)} rows  |  Test: {len(X_test)} rows\n")
 
-    # ── Baseline: Logistic Regression ──
-    lr_pipe = Pipeline([
+    report_lines = [
+        "CMX FLIGHT DELAY PREDICTION — MODEL EVALUATION REPORT",
+        f"Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Dataset:   {len(df)} CMX flights  |  Delay rate: {y.mean():.1%}",
+        f"Features:  {len(FEATURES)}",
+    ]
+
+    # ── Baseline: Logistic Regression ──────────────────────
+    lr = Pipeline([
         ('scaler', StandardScaler()),
-        ('clf', LogisticRegression(class_weight='balanced', random_state=42))
+        ('clf', LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42))
     ])
-    lr_scores = cross_val_score(lr_pipe, X_train, y_train, cv=5, scoring='f1')
-    print(f"\nBaseline (Logistic Regression) CV F1: {lr_scores.mean():.3f} ± {lr_scores.std():.3f}")
-
-    # ── Improved: Random Forest ──
-    rf = RandomForestClassifier(
-        n_estimators=200,
-        max_depth=8,
-        min_samples_leaf=3,
-        class_weight='balanced',
-        random_state=42,
-        n_jobs=-1
+    lr_model, lr_auc, lr_prob = evaluate_model(
+        "Baseline — Logistic Regression", lr,
+        X_train, X_test, y_train, y_test, report_lines
     )
-    rf_scores = cross_val_score(rf, X_train, y_train, cv=5, scoring='f1')
-    print(f"Improved  (Random Forest)       CV F1: {rf_scores.mean():.3f} ± {rf_scores.std():.3f}")
 
-    # ── Final evaluation ──
-    rf.fit(X_train, y_train)
-    y_pred = rf.predict(X_test)
-    print(f"\nTest Set Report:\n{classification_report(y_test, y_pred)}")
+    # ── Improved: Random Forest ─────────────────────────────
+    rf = RandomForestClassifier(
+        n_estimators=200, max_depth=8, min_samples_leaf=3,
+        class_weight='balanced', random_state=42, n_jobs=-1
+    )
+    rf_model, rf_auc, rf_prob = evaluate_model(
+        "Improved — Random Forest", rf,
+        X_train, X_test, y_train, y_test, report_lines
+    )
 
-    # Feature importance
-    importances = pd.Series(rf.feature_importances_, index=FEATURES).sort_values(ascending=False)
-    print("\nTop feature importances:")
-    print(importances.head(8).to_string())
+    # ── Feature Importance ──────────────────────────────────
+    importance = pd.Series(rf.feature_importances_, index=FEATURES)\
+        .sort_values(ascending=False)
+    importance.to_csv("results/feature_importance.csv", header=['importance'])
 
-    return rf
+    imp_lines = [
+        "\nTop Feature Importances (Random Forest):",
+        importance.head(10).to_string(),
+        f"\nBaseline AUC: {lr_auc:.3f}",
+        f"Improved AUC: {rf_auc:.3f}",
+        f"Improvement:  +{rf_auc - lr_auc:.3f}",
+    ]
+    for l in imp_lines:
+        print(l)
+    report_lines.extend(imp_lines)
 
-def save_model(cancel_model, delay_model):
-    bundle = {
-        'cancel_model': cancel_model,
-        'delay_model':  delay_model,
-        'features':     FEATURES,
-    }
-    joblib.dump(bundle, 'model.pkl')
-    print("\n✅ Model saved → model.pkl")
+    # ── Save report ─────────────────────────────────────────
+    with open("results/report.txt", "w") as f:
+        f.write("\n".join(report_lines))
+    print("\nReport saved → results/report.txt")
 
-# ──────────────────────────────────────────────
-# FLASK SERVER (run separately or append here)
-# ──────────────────────────────────────────────
-FLASK_SERVER = '''
-# predict_server.py  — run with: python predict_server.py
-# Then call from index.html: fetch('http://localhost:5000/predict?...')
+    # ── Save best model ─────────────────────────────────────
+    joblib.dump({
+        'model':    rf,
+        'features': FEATURES,
+        'auc':      rf_auc,
+    }, 'model.pkl')
+    print("Model saved → model.pkl")
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import joblib
-import numpy as np
-import requests
+    # ── Plot feature importance ─────────────────────────────
+    fig, ax = plt.subplots(figsize=(8, 5))
+    importance.head(10).plot(kind='barh', ax=ax, color='steelblue')
+    ax.set_xlabel('Feature Importance')
+    ax.set_title('CMX Delay Prediction — Top 10 Features')
+    ax.invert_yaxis()
+    plt.tight_layout()
+    plt.savefig("results/feature_importance.png", dpi=150)
+    print("Plot saved → results/feature_importance.png")
 
-app = Flask(__name__)
-CORS(app)
+    # ── ROC Curve ───────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(6, 5))
+    RocCurveDisplay.from_predictions(y_test, lr_prob, name="Logistic Regression", ax=ax)
+    RocCurveDisplay.from_predictions(y_test, rf_prob, name="Random Forest", ax=ax)
+    ax.set_title("ROC Curve — CMX Delay Prediction")
+    plt.tight_layout()
+    plt.savefig("results/roc_curve.png", dpi=150)
+    print("ROC curve saved → results/roc_curve.png")
 
-bundle = joblib.load('model.pkl')
-cancel_model = bundle['cancel_model']
-delay_model  = bundle['delay_model']
-FEATURES     = bundle['features']
-
-def get_current_weather(lat, lon):
-    url = (f"https://api.open-meteo.com/v1/forecast"
-           f"?latitude={lat}&longitude={lon}"
-           f"&current=weather_code,wind_speed_10m,snowfall"
-           f"&daily=snowfall_sum,precipitation_sum"
-           f"&forecast_days=1&wind_speed_unit=mph")
-    r = requests.get(url, timeout=10)
-    d = r.json()
-    return {
-        'wind':   d['current'].get('wind_speed_10m', 0),
-        'snow':   d['daily']['snowfall_sum'][0] or 0,
-        'precip': d['daily']['precipitation_sum'][0] or 0,
-        'wmo':    d['current'].get('weather_code', 0),
-    }
-
-@app.route('/predict')
-def predict():
-    from datetime import datetime
-    now = datetime.now()
-    cmx = get_current_weather(47.1684, -88.4891)
-    ord_ = get_current_weather(41.9742, -87.9073)
-
-    X = [[
-        cmx['wind'], cmx['snow'], cmx['precip'],
-        ord_['wind'], ord_['snow'], ord_['precip'],
-        int(cmx['snow'] > 0.1), int(ord_['snow'] > 0.1),
-        now.month, now.weekday(),
-        int(now.weekday() >= 5),
-        int(now.month in [12,1,2,3]),
-    ]]
-
-    cancel_prob = cancel_model.predict_proba(X)[0][1]
-    delay_prob  = delay_model.predict_proba(X)[0][1]
-
-    reasons = []
-    if cmx['wind'] > 25: reasons.append(f"Strong CMX winds ({cmx['wind']:.0f} mph)")
-    if ord_['wind'] > 25: reasons.append(f"Strong ORD winds ({ord_['wind']:.0f} mph)")
-    if cmx['snow'] > 0.1: reasons.append("Snow at CMX")
-    if ord_['snow'] > 0.1: reasons.append("Snow at ORD")
-    if not reasons: reasons = ["Favorable conditions"]
-
-    return jsonify({
-        'cancel_pct': round(cancel_prob * 100),
-        'delay_pct':  round(delay_prob  * 100),
-        'reason':     ', '.join(reasons)
-    })
-
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
-'''
-
-if __name__ == "__main__":
-    print("=== CMX AI Model Training ===\n")
-
-    df = load_data()
-
-    cancel_model = train_and_evaluate(df, 'cancelled', 'CANCELLATION')
-    delay_model  = train_and_evaluate(df, 'delayed',   'DELAY (>15 min)')
-
-    save_model(cancel_model, delay_model)
-
-    # Write Flask server file
-    with open('predict_server.py', 'w') as f:
-        f.write(FLASK_SERVER.strip())
-    print("✅ Flask server written → predict_server.py")
-    print("\nNext steps:")
-    print("  1. pip install flask flask-cors")
-    print("  2. python predict_server.py")
-    print("  3. Update runAIPredictions() in index.html to call http://localhost:5000/predict")
-    print("     Or deploy to Render/Railway for a live endpoint.")
+    print("\nDone! Check the results/ folder for charts and your report.txt.")
