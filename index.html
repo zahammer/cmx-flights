@@ -884,8 +884,10 @@ const CAMS = [
 let currentCam = 0;
 
 function startWebcamRefresh() {
-  refreshWebcam();
-  setInterval(refreshWebcam, 5 * 60 * 1000); // every 5 min
+  // ipcamlive handles its own streaming — nothing to poll
+}
+function refreshWebcam() {
+  // no-op for ipcamlive embed
 }
 
 function refreshWebcam() {
