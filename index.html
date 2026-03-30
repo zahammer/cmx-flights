@@ -610,31 +610,45 @@ async function fetchFlights() {
 
   const start  = selectedDate + 'T00:00:00Z';
   const end    = selectedDate + 'T23:59:59Z';
-  const proxy  = 'https://corsproxy.io/?';
+  const proxy  = 'https://corsproxy.io/?url=';
   const base   = 'https://aeroapi.flightaware.com/aeroapi';
-  const headers = { 'x-apikey': API_KEY };
+  const headers = { 'x-apikey': API_KEY, 'Content-Type': 'application/json' };
 
   try {
+    const arrUrl = `${base}/airports/KCMX/flights/arrivals?start=${start}&end=${end}&max_pages=1`;
+    const depUrl = `${base}/airports/KCMX/flights/departures?start=${start}&end=${end}&max_pages=1`;
+
     const [arrRes, depRes] = await Promise.all([
-      fetch(proxy + encodeURIComponent(`${base}/airports/KCMX/flights/arrivals?start=${start}&end=${end}&max_pages=1`), { headers }),
-      fetch(proxy + encodeURIComponent(`${base}/airports/KCMX/flights/departures?start=${start}&end=${end}&max_pages=1`), { headers })
+      fetch(proxy + encodeURIComponent(arrUrl), { headers }),
+      fetch(proxy + encodeURIComponent(depUrl), { headers })
     ]);
 
+    // Log raw status for debugging
+    console.log('Arrivals status:', arrRes.status);
+    console.log('Departures status:', depRes.status);
+
     if (arrRes.status === 401 || depRes.status === 401) {
-      showFlightError('Invalid API key — check your AeroAPI key and try again.');
+      showFlightError('❌ API key rejected (401) — double check your FlightAware AeroAPI key.');
       return;
     }
     if (arrRes.status === 403) {
-      showFlightError('API key does not have permission — make sure you activated a plan at flightaware.com/aeroapi/portal.');
+      showFlightError('❌ Permission denied (403) — make sure you activated a plan at flightaware.com/aeroapi/portal.');
       return;
     }
     if (arrRes.status === 429 || depRes.status === 429) {
-      showFlightError('Monthly request limit reached.');
+      showFlightError('❌ Rate limit reached (429) — monthly free calls used up.');
+      return;
+    }
+    if (!arrRes.ok || !depRes.ok) {
+      showFlightError(`❌ API error — arrivals: ${arrRes.status}, departures: ${depRes.status}`);
       return;
     }
 
     const arrData = await arrRes.json();
     const depData = await depRes.json();
+
+    console.log('Arrivals data:', arrData);
+    console.log('Departures data:', depData);
 
     const arrivals   = (arrData.arrivals   || []).slice(0, 4);
     const departures = (depData.departures || []).slice(0, 4);
@@ -644,6 +658,7 @@ async function fetchFlights() {
     updateTimestamp();
     runAIPredictions();
   } catch (e) {
+    console.error('Flight fetch error:', e);
     showFlightError('Network error — ' + e.message);
   }
 }
