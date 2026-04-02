@@ -630,14 +630,27 @@ async function fetchFlights() {
   const base   = 'https://aeroapi.flightaware.com/aeroapi';
   const headers = { 'x-apikey': API_KEY, 'Content-Type': 'application/json' };
 
+  // Try primary proxy, fall back to secondary if it fails
+  async function proxyFetch(url) {
+    const proxies = [
+      'https://corsproxy.io/?url=',
+      'https://api.codetabs.com/v1/proxy?quest=',
+      'https://thingproxy.freeboard.io/fetch/',
+    ];
+    for (const px of proxies) {
+      try {
+        const res = await fetch(px + encodeURIComponent(url), { headers });
+        if (res.ok || res.status === 401 || res.status === 403 || res.status === 429) return res;
+      } catch (e) { continue; }
+    }
+    throw new Error('All proxies failed');
+  }
+
   try {
     const arrUrl = `${base}/airports/KCMX/flights/arrivals?start=${start}&end=${end}&max_pages=1`;
     const depUrl = `${base}/airports/KCMX/flights/departures?start=${start}&end=${end}&max_pages=1`;
 
-    const [arrRes, depRes] = await Promise.all([
-      fetch(proxy + encodeURIComponent(arrUrl), { headers }),
-      fetch(proxy + encodeURIComponent(depUrl), { headers })
-    ]);
+    const [arrRes, depRes] = await Promise.all([proxyFetch(arrUrl), proxyFetch(depUrl)]);
 
     // Log raw status for debugging
     console.log('Arrivals status:', arrRes.status);
