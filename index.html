@@ -425,7 +425,7 @@
 
   <!-- AI note (shown only when predictions are loaded) -->
   <div class="ai-note" id="ai-note" style="display:none;">
-    🤖 AI PREDICTIONS — Cancellation/delay risk based on live weather at CMX &amp; ORD.
+     AI PREDICTIONS — Cancellation/delay risk based on live weather at CMX &amp; ORD.
   </div>
 
   <!-- Date Navigation -->
@@ -758,7 +758,7 @@ function renderArrivals(flights) {
   document.getElementById('arr-ai-header').style.display = showAI ? '' : 'none';
   if (!flights.length) {
     document.getElementById('arrivals-body').innerHTML =
-      `<tr><td colspan="5"><div class="state-box"><span class="icon">🛬</span>No arrivals found</div></td></tr>`;
+      `<tr><td colspan="5"><div class="state-box"><span class="icon"></span>No arrivals found</div></td></tr>`;
     return;
   }
   document.getElementById('arrivals-body').innerHTML = flights.map(f => {
@@ -785,7 +785,7 @@ function renderDepartures(flights) {
   document.getElementById('dep-ai-header').style.display = showAI ? '' : 'none';
   if (!flights.length) {
     document.getElementById('departures-body').innerHTML =
-      `<tr><td colspan="5"><div class="state-box"><span class="icon">🛫</span>No departures found</div></td></tr>`;
+      `<tr><td colspan="5"><div class="state-box"><span class="icon"></span>No departures found</div></td></tr>`;
     return;
   }
   document.getElementById('departures-body').innerHTML = flights.map(f => {
@@ -953,7 +953,7 @@ function loadYTStream() {}
 // ═══════════════════════════════════════════════
 async function runAIPredictions() {
   const panel = document.getElementById('ai-panel');
-  panel.innerHTML = `<div style="padding:16px;color:var(--muted);font-size:13px;">🤖 Fetching weather for prediction...</div>`;
+  panel.innerHTML = `<div style="padding:16px;color:var(--muted);font-size:13px;"> Fetching weather for prediction...</div>`;
 
   try {
     const now = new Date();
